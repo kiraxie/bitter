@@ -3,6 +3,7 @@ import signal
 import math
 from datetime import datetime
 from time import sleep
+import logging
 
 from .center import Center
 from .quote import Quote
@@ -144,10 +145,11 @@ class Liqueur:
     __is_login = False
     __connected = False
     __alive = True
+    __applog = None
+    __corelog = None
 
     __terminate_delegation = {}
     __time_delegation = {}
-    __message_delegation = {}
     __quote_delegation = {}
     __tick_delegation = {}
     __kbar_delegation = {}
@@ -162,31 +164,47 @@ class Liqueur:
     def config(self):
         return self.__config
 
-    # Private function
-    def __message(self, message='', ret_code=-1, end='\n'):
-        ''' Uniform message interface for class internal use.
+    @property
+    def applog(self):
+        ''' A logging instance to logging application level event.
 
+            More detail: https://docs.python.org/3/library/logging.html
+        '''
+        return self.__applog
+
+    # Private function
+    def _corelog(self, err, level=logging.NOTSET, message=''):
+        ''' A logging instance to log Capital internal message.
+
+            More detail: https://docs.python.org/3/library/logging.html
+
+            This function will log the error message when error code not success.
+            Otherwise, will log the message with level if provide
         Args:
-            [string]message: Message that you want to send.
-            [return_codes]ret_code: The API return code, if this value isn't 0(success),
-                the error message(via center module) will be appended to the message.
-                Default: success(0)
-            [string]end: Append this argument to the message tail.
+            [return_codes]err: The API return code, if this value isn't 0(success),
+                the error message(via center module) will be logging with error level.
+            [logging.level]level: Logging level which decide the message level.
+            [string]message: Log this message if err is success.
 
         Returns:
-            True: Means return code isn't success.
+            True: Means err isn't success.
             False: Means return is success.
         '''
-        err_ret = False
+        if err != return_codes.success:
+            self.__corelog.error(self.__center.get_return_code_msg(err))
+            return True
 
-        if ret_code != return_codes.success and ret_code != -1:
-            message += ('[%s]' % self.__center.get_return_code_msg(ret_code))
-            err_ret = True
+        log_fn = {
+            logging.INFO: self.__applog.info,
+            logging.WARN: self.__applog.warning,
+            logging.ERROR: self.__applog.error,
+            logging.CRITICAL: self.__applog.critical,
+        }.get(level, self.__applog.debug)
 
-        if message != '' and ret_code == -1:
-            self.__excute_delegation(self.__message_delegation, message + end)
+        if message != '':
+            log_fn(message)
 
-        return err_ret
+        return False
 
     def __login(self):
         ''' Sign in the Capital server and enter the quote receiving mode.
@@ -225,17 +243,15 @@ class Liqueur:
                 'The \"username\" or \"password\" attribute doesn\'t exist!'
             )
 
-        ret = self.__center.login(
-            account_conf['username'], account_conf['password'])
-        if self.__message('...fail!', ret_code=ret):
+        err = self.__center.login(account_conf['username'], account_conf['password'])
+        if self._corelog(err, logging.INFO, 'Login...ok'):
             return
 
-        ret = self.__quote.enter_monitor()
-        if self.__message('Quote server sign in fail! ', ret_code=ret):
+        err = self.__quote.enter_monitor()
+        if self._corelog(err, logging.INFO, 'Connect quote server...ok'):
             return
 
         self.__is_login = True
-        self.__message(message='...ok')
 
     def __signal_handler(self, signum, frame):
         ''' The daemon signal handler.
@@ -278,9 +294,9 @@ class Liqueur:
         if dt is not None and dt.second % 15 != 0:
             return
 
-        ret = self.__quote.request_server_time()
-        if self.__message('Heartbeat miss! ', ret_code=ret):
-            return
+        err = self.__quote.request_server_time()
+        if self._corelog(err):
+            self.terminate()
 
     def __subscription(self):
         ''' Internal market data subscription.
@@ -303,30 +319,30 @@ class Liqueur:
             None
         '''
         for page_string in self.subscription_mgr.quote:
-            (page, ret) = self.__quote.request_stocks(-1, page_string)
-            if self.__message('Quote subscription: ', ret_code=ret):
+            (page, err) = self.__quote.request_stocks(-1, page_string)
+            if self._corelog(err):
                 return
 
         if len(self.subscription_mgr.detail) > 0:
             for orderbook_id in self.subscription_mgr.detail:
-                (page, ret) = self.__quote.request_ticks(-1, orderbook_id)
-                if self.__message('Quote detail subscription: ', ret_code=ret):
+                (page, err) = self.__quote.request_ticks(-1, orderbook_id)
+                if self._corelog(err):
                     return
         else:
             for orderbook_id in self.subscription_mgr.tick:
-                (page, ret) = self.__quote.request_live_tick(-1, orderbook_id)
-                if self.__message('Quote tick subscription: ', ret_code=ret):
+                (page, err) = self.__quote.request_live_tick(-1, orderbook_id)
+                if self._corelog(err):
                     return
 
         for (orderbook_id, kbar_type) in self.subscription_mgr.kbar:
-            ret = self.__quote.request_k_line_am(orderbook_id,
+            err = self.__quote.request_k_line_am(orderbook_id,
                                                  kbar_type, kbar_out_type.new, kbar_trade_session.daylight)
-            if self.__message('Quote K bar subscription: ', ret_code=ret):
+            if self._corelog(err):
                 return
 
         for market in self.subscription_mgr.stocks_of_market:
-            ret = self.__quote.request_stock_list(market)
-            if self.__message('Stock list subscription: ', ret_code=ret):
+            err = self.__quote.request_stock_list(market)
+            if self._corelog(err):
                 return
 
     def __add_hook_callback(self, delegation_map, func, rule):
@@ -405,6 +421,10 @@ class Liqueur:
             self.subscription_mgr = SubscriptionMgr()
         self.__time_delegation[-1] = self.__send_heartbeat
 
+        logging.basicConfig(level=logging.INFO, format="[%(asctime)s][%(name)s][%(levelname)s]: %(message)s")
+        self.__applog = logging.getLogger('liqueur')
+        self.__corelog = logging.getLogger('liqueur.core')
+
     def __del__(self):
         ''' Liqueur application destructor
 
@@ -438,29 +458,30 @@ class Liqueur:
 
     def OnConnection(self, nKind, nCode):
         ''' Detail in offical document 4-4-a'''
-        if self.__message('', ret_code=nCode):
+        if self._corelog(nCode):
+            self.terminate()
             return
 
         if nKind == return_codes.subject_connection_connected:
-            self.__message(message='Connect...', end='')
+            self.applog.info('Session...established')
         elif nKind == return_codes.subject_connection_disconnect:
-            self.__message(message='Disconnect!')
+            self.applog.warning('Session...disconnect')
             self.__connected = False
         elif nKind == return_codes.subject_connection_stocks_ready:
-            self.__message(message='...success')
+            self.applog.info('Session...ready')
             self.__connected = True
             self.__send_heartbeat()
             self.__subscription()
         elif nKind == return_codes.subject_connection_fail:
-            self.__message(message='...failure')
+            self.applog.error('Connection failure')
             self.__alive = False
         else:
-            self.__message(message='...', ret_code=nKind)
+            self._corelog(nKind)
 
     def OnNotifyQuote(self, sMarketNo, sIndex):
         ''' Detail in offical document 4-4-b'''
-        (p_stock, ret) = self.__quote.get_stock_by_index(sMarketNo, sIndex)
-        if self.__message('', ret_code=ret):
+        (p_stock, err) = self.__quote.get_stock_by_index(sMarketNo, sIndex)
+        if self._corelog(err):
             return
 
         orderbook_id = p_stock.bstrStockNo
@@ -493,8 +514,8 @@ class Liqueur:
     def OnNotifyTicks(self, sMarketNo, sIndex, nPtr, nDate, nTimehms, nTimemillismicros, nBid, nAsk, nClose, nQty,
                       nSimulate):
         ''' Detail in offical document 4-4-d'''
-        (p_stock, ret) = self.__quote.get_stock_by_index(sMarketNo, sIndex)
-        if self.__message('', ret_code=ret):
+        (p_stock, err) = self.__quote.get_stock_by_index(sMarketNo, sIndex)
+        if self._corelog(err):
             return
 
         orderbook_id = p_stock.bstrStockNo
@@ -511,8 +532,8 @@ class Liqueur:
     def OnNotifyHistoryTicks(self, sMarketNo, sIndex, nPtr, nDate, nTimehms, nTimemillismicros, nBid, nAsk, nClose,
                              nQty, nSimulate):
         ''' Detail in offical document 4-4-c'''
-        (p_stock, ret) = self.__quote.get_stock_by_index(sMarketNo, sIndex)
-        if self.__message('', ret_code=ret):
+        (p_stock, err) = self.__quote.get_stock_by_index(sMarketNo, sIndex)
+        if self._corelog(err):
             return
 
         orderbook_id = p_stock.bstrStockNo
@@ -539,8 +560,8 @@ class Liqueur:
                       nBestAsk1, nBestAskQty1, nBestAsk2, nBestAskQty2, nBestAsk3, nBestAskQty3, nBestAsk4,
                       nBestAskQty4, nBestAsk5, nBestAskQty5, nExtendAsk, nExtendAskQty, nSimulate):
         ''' Detail in offical document 4-4-e'''
-        (p_stock, ret) = self.__quote.get_stock_by_index(sMarketNo, sStockidx)
-        if self.__message('', ret_code=ret):
+        (p_stock, err) = self.__quote.get_stock_by_index(sMarketNo, sStockidx)
+        if self._corelog(err):
             return
 
         orderbook_id = p_stock.bstrStockNo
@@ -590,7 +611,6 @@ class Liqueur:
         (qhandler, rhandler) = (self.__quote.hook_event(
             self), self.__reply.hook_event(self))
 
-        self.__message(message='Login...', end='')
         self.__login()
 
         while self.__alive and self.__is_login:
@@ -691,43 +711,6 @@ class Liqueur:
             None
         '''
         self.__add_hook_callback(self.__time_delegation, f, 0)
-
-    def hook_message(self, rule=0):
-        ''' Decorator which hooks the message callback function.
-
-        By default, the application DOES NOT print or log any message,
-        so the developer can choose what it does when message pops out.
-
-        Args:
-            (int)rule: The excuted order.
-
-        Returns:
-            None
-
-        Raises:
-            None
-        '''
-        def decorator(f):
-            self.__add_hook_callback(self.__message_delegation, f, rule)
-            return f
-        return decorator
-
-    def append_message_delegate(self, f):
-        ''' Function way to hook the message callback function.
-
-        By default, the application DOES NOT print or log any message,
-        so the developer can choose what it does when message pops out.
-
-        Args:
-            (function point)func: Function pointer
-
-        Returns:
-            None
-
-        Raises:
-            None
-        '''
-        self.__add_hook_callback(self.__message_delegation, f, 0)
 
     def hook_quote(self, rule=0):
         ''' Decorator which hooks the quote callback function.
@@ -866,20 +849,6 @@ class Liqueur:
             None
         '''
         self.__add_hook_callback(self.__stocks_of_market_delegation, f, 0)
-
-    def message(self, message_str):
-        ''' External message interface.
-
-        Args:
-            [string]message: Message that you want to send.
-
-        Returns:
-            None
-
-        Raises:
-            None
-        '''
-        self.__message(message=message_str)
 
     def subscription(self, subscription_conf=None):
         ''' Subscribe the stock information from market.
