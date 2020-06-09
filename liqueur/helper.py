@@ -202,13 +202,3 @@ class CapitalAPIHelper(Helper):
         for child in self._package_work_dir.iterdir():
             if child.suffix == '.dll':
                 os.remove(child)
-
-
-# c = VcredistHelper('10.0.40219.325', '~/.liqueur')
-# c = CapitalAPIHelper('2.13.20', '~/.liqueur')
-# c.install()
-# print(c.version)
-# c.uninstall()
-# print(c.version)
-# c.install()
-# print(c.version)

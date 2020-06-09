@@ -9,6 +9,7 @@ from .quote import Quote
 from .reply import Reply
 from .codes import return_codes, kbar_type, kbar_out_type, kbar_trade_session
 from .structure import Tick, QuoteData, KBar, PriceQty, BestFivePrice
+from .sqlalchemy import LiqueurSqlAlchemy
 
 
 Today = datetime.today()
@@ -200,7 +201,7 @@ class Liqueur:
         return False
 
     def _add_extension(self, t):
-        if not isinstance(Thread, t):
+        if not isinstance(t, Thread):
             self.__applog.error('the class is not inheritance from Thread')
             return
 
@@ -411,7 +412,12 @@ class Liqueur:
         self.__applog = logging.getLogger('liqueur')
         self.__corelog = logging.getLogger('liqueur.core')
 
-        self._add_extension(LiqueurPostgres(self))
+        if 'sqlalchemy' in conf:
+            db = LiqueurSqlAlchemy(self, conf['sqlalchemy'])
+            self._add_extension(db)
+            self.append_tick_delegate(db.on_tick)
+            self.append_kbar_delegate(db.on_candlestick)
+            self.append_quote_delegate(db.on_quote)
 
     def __del__(self):
         ''' Liqueur application destructor
@@ -621,45 +627,6 @@ class Liqueur:
             self.__quote.leave_monitor()
             for t in self.__extension:
                 t.stop()
-
-    def hook_time(self, rule=0):
-        ''' Decorator which hooks the time callback function.
-
-        These functions will be excuted when time event was triggered.
-
-        By default, the heartbeat was hooked on this delegation group in class initialization.
-
-        Args:
-            (int)rule: The excuted order.
-
-        Returns:
-            None
-
-        Raises:
-            None
-        '''
-        def decorator(f):
-            self.__add_hook_callback(self.__time_delegation, f, rule)
-            return f
-        return decorator
-
-    def append_time_delegate(self, f):
-        ''' Function way to hook the time callback function.
-
-        These functions will be excuted when time event was triggered.
-
-        By default, the heartbeat was hooked on this delegation group in class initialization.
-
-        Args:
-            (function point)func: Function pointer
-
-        Returns:
-            None
-
-        Raises:
-            None
-        '''
-        self.__add_hook_callback(self.__time_delegation, f, 0)
 
     def hook_quote(self, rule=0):
         ''' Decorator which hooks the quote callback function.
