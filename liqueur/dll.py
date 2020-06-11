@@ -3,7 +3,7 @@ from .helper import VcredistHelper, CapitalAPIHelper
 
 _DLL_INIT_FLAG = False
 VCREDIST_VER_REQUIRED = '10.0.40219.325'
-DLL_VER_REQUIRED = '2.13.20'
+DLL_VER_REQUIRED = '2.13.23'
 
 
 def _api_initialization(cls):
