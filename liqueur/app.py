@@ -1,8 +1,6 @@
 import pythoncom
-import signal
 import math
 from datetime import datetime
-from time import sleep
 import logging
 
 from .center import Center
@@ -142,8 +140,6 @@ class Liqueur:
     __reply = None
 
     __config = {}
-    __is_login = False
-    __connected = False
     __alive = True
     __applog = None
     __corelog = None
@@ -163,14 +159,6 @@ class Liqueur:
     @property
     def config(self):
         return self.__config
-
-    @property
-    def applog(self):
-        ''' A logging instance to logging application level event.
-
-            More detail: https://docs.python.org/3/library/logging.html
-        '''
-        return self.__applog
 
     # Private function
     def _corelog(self, err, level=logging.NOTSET, message=''):
@@ -251,29 +239,6 @@ class Liqueur:
         if self._corelog(err, logging.INFO, 'Connect quote server...ok'):
             return
 
-        self.__is_login = True
-
-    def __signal_handler(self, signum, frame):
-        ''' The daemon signal handler.
-
-        The main goal is to catch "ctrl + c" interrupt sig number to stop this application.
-
-        More detail: https://docs.python.org/3/library/signal.html
-
-        Args:
-            (int)signum: The signal number.
-            (frame)frame: The current stack frame (None or a frame object)
-
-        Returns:
-            None
-
-        Raises:
-            None
-        '''
-        self.__quote.leave_monitor()
-        self.__is_login = False
-        self.__alive = False
-
     def __send_heartbeat(self, dt=None):
         ''' Send heartbeat to Capital server.
 
@@ -296,7 +261,7 @@ class Liqueur:
 
         err = self.__quote.request_server_time()
         if self._corelog(err):
-            self.terminate()
+            self.stop()
 
     def __subscription(self):
         ''' Internal market data subscription.
@@ -453,27 +418,26 @@ class Liqueur:
         ''' Detail in offical document 4-4-g'''
         dt = datetime.combine(datetime.now(), datetime.strptime(
             (('%d:%d:%d') % (sHour, sMinute, sSecond)), '%H:%M:%S').time())
-        if self.__connected:
+        if self.__alive:
             self.__excute_delegation(self.__time_delegation, dt)
 
     def OnConnection(self, nKind, nCode):
         ''' Detail in offical document 4-4-a'''
         if self._corelog(nCode):
-            self.terminate()
+            self.stop()
             return
 
         if nKind == return_codes.subject_connection_connected:
-            self.applog.info('Session...established')
+            self.__applog.info('Session...established')
         elif nKind == return_codes.subject_connection_disconnect:
-            self.applog.warning('Session...disconnect')
-            self.__connected = False
+            self.__applog.warning('Session...disconnect')
+            self.__alive = False
         elif nKind == return_codes.subject_connection_stocks_ready:
-            self.applog.info('Session...ready')
-            self.__connected = True
+            self.__applog.info('Session...ready')
             self.__send_heartbeat()
             self.__subscription()
         elif nKind == return_codes.subject_connection_fail:
-            self.applog.error('Connection failure')
+            self.__applog.error('Connection failure')
             self.__alive = False
         else:
             self._corelog(nKind)
@@ -606,23 +570,15 @@ class Liqueur:
         Raises:
             None
         '''
-        signal.signal(signal.SIGINT, self.__signal_handler)
-
         (qhandler, rhandler) = (self.__quote.hook_event(
             self), self.__reply.hook_event(self))
 
         self.__login()
 
-        while self.__alive and self.__is_login:
+        while self.__alive:
             pythoncom.PumpWaitingMessages()
 
-        if self.__is_login:
-            self.__quote.leave_monitor()
-
-        while self.__connected:
-            pythoncom.PumpWaitingMessages()
-
-    def terminate(self):
+    def stop(self):
         ''' Terminate the application.
 
         Args:
@@ -635,7 +591,9 @@ class Liqueur:
             None
         '''
         if self.__alive:
-            self.__alive = False
+            self.__quote.leave_monitor()
+            # self.__is_login = False
+            # self.__alive = False
             self.__excute_delegation(self.__terminate_delegation)
 
     def hook_terminate(self, rule=0):
