@@ -1,6 +1,7 @@
 import pythoncom
 import math
 from datetime import datetime
+from threading import Thread
 import logging
 
 from .center import Center
@@ -8,6 +9,9 @@ from .quote import Quote
 from .reply import Reply
 from .codes import return_codes, kbar_type, kbar_out_type, kbar_trade_session
 from .structure import Tick, QuoteData, KBar, PriceQty, BestFivePrice
+
+
+Today = datetime.today()
 
 
 class SubscriptionMgr:
@@ -143,9 +147,10 @@ class Liqueur:
     __alive = True
     __applog = None
     __corelog = None
+    __shutdown = 0
 
-    __terminate_delegation = {}
-    __time_delegation = {}
+    __extension = []
+
     __quote_delegation = {}
     __tick_delegation = {}
     __kbar_delegation = {}
@@ -194,7 +199,14 @@ class Liqueur:
 
         return False
 
-    def __login(self):
+    def _add_extension(self, t):
+        if not isinstance(Thread, t):
+            self.__applog.error('the class is not inheritance from Thread')
+            return
+
+        self.__extension.append(t)
+
+    def _login(self):
         ''' Sign in the Capital server and enter the quote receiving mode.
 
         The attribute "account" has to exist in configuration object and
@@ -239,7 +251,7 @@ class Liqueur:
         if self._corelog(err, logging.INFO, 'Connect quote server...ok'):
             return
 
-    def __send_heartbeat(self, dt=None):
+    def _send_heartbeat(self, dt=None):
         ''' Send heartbeat to Capital server.
 
         It's a suggested by Capital to send a server time request as heartbeat every 15 secs.
@@ -263,7 +275,7 @@ class Liqueur:
         if self._corelog(err):
             self.stop()
 
-    def __subscription(self):
+    def _subscription(self):
         ''' Internal market data subscription.
 
         Considering the orignal subscription is diffcult for maintenance,
@@ -362,6 +374,16 @@ class Liqueur:
             if func is not None:
                 func(*argv)
 
+    def _on_time(self, dt):
+        if True:
+            self.__applog.info(dt)
+
+        if Today.replace(hour=14, minute=45) < dt:
+            self.__shutdown += 1
+            if self.__shutdown >= 60:
+                self.__applog.info('cheers!')
+                self.stop()
+
     def __init__(self, conf):
         ''' Liqueur application constructor
 
@@ -384,11 +406,12 @@ class Liqueur:
                 self.__config['subscription'])
         else:
             self.subscription_mgr = SubscriptionMgr()
-        self.__time_delegation[-1] = self.__send_heartbeat
 
         logging.basicConfig(level=logging.INFO, format="[%(asctime)s][%(name)s][%(levelname)s]: %(message)s")
         self.__applog = logging.getLogger('liqueur')
         self.__corelog = logging.getLogger('liqueur.core')
+
+        self._add_extension(LiqueurPostgres(self))
 
     def __del__(self):
         ''' Liqueur application destructor
@@ -418,8 +441,7 @@ class Liqueur:
         ''' Detail in offical document 4-4-g'''
         dt = datetime.combine(datetime.now(), datetime.strptime(
             (('%d:%d:%d') % (sHour, sMinute, sSecond)), '%H:%M:%S').time())
-        if self.__alive:
-            self.__excute_delegation(self.__time_delegation, dt)
+        self._on_time(dt)
 
     def OnConnection(self, nKind, nCode):
         ''' Detail in offical document 4-4-a'''
@@ -434,8 +456,8 @@ class Liqueur:
             self.__alive = False
         elif nKind == return_codes.subject_connection_stocks_ready:
             self.__applog.info('Session...ready')
-            self.__send_heartbeat()
-            self.__subscription()
+            self._send_heartbeat()
+            self._subscription()
         elif nKind == return_codes.subject_connection_fail:
             self.__applog.error('Connection failure')
             self.__alive = False
@@ -570,13 +592,18 @@ class Liqueur:
         Raises:
             None
         '''
-        (qhandler, rhandler) = (self.__quote.hook_event(
-            self), self.__reply.hook_event(self))
+        for t in self.__extension:
+            t.start()
 
-        self.__login()
+        (qhandler, rhandler) = (self.__quote.hook_event(self), self.__reply.hook_event(self))
+
+        self._login()
 
         while self.__alive:
             pythoncom.PumpWaitingMessages()
+
+        for t in self.__extension:
+            t.join()
 
     def stop(self):
         ''' Terminate the application.
@@ -592,44 +619,8 @@ class Liqueur:
         '''
         if self.__alive:
             self.__quote.leave_monitor()
-            # self.__is_login = False
-            # self.__alive = False
-            self.__excute_delegation(self.__terminate_delegation)
-
-    def hook_terminate(self, rule=0):
-        ''' Decorator which hooks the terminate callback function.
-
-        These functions will be excuted when terminate function was triggered.
-
-        Args:
-            (int)rule: The excuted order.
-
-        Returns:
-            None
-
-        Raises:
-            None
-        '''
-        def decorator(f):
-            self.__add_hook_callback(self.__terminate_delegation, f, rule)
-            return f
-        return decorator
-
-    def append_terminate_delegate(self, f):
-        ''' Function way to hook the terminate callback function.
-
-        These functions will be excuted when terminate function was triggered.
-
-        Args:
-            (function point)func: Function pointer
-
-        Returns:
-            None
-
-        Raises:
-            None
-        '''
-        self.__add_hook_callback(self.__terminate_delegation, f, 0)
+            for t in self.__extension:
+                t.stop()
 
     def hook_time(self, rule=0):
         ''' Decorator which hooks the time callback function.
@@ -824,4 +815,4 @@ class Liqueur:
             self.subscription_mgr.clear()
             self.subscription_mgr.load(subscription_conf)
 
-        self.__subscription()
+        self._subscription()
