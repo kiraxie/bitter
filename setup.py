@@ -30,7 +30,7 @@ setup(
         'wget >= 3.2; platform_system=="Windows"',
         'requests >= 2.23.0; platform_system=="Windows"',
         'sqlalchemy >= 1.3.17; platform_system=="Windows"',
-        'psycopg2 >= 2.8.5; platform_system=="Windows"',
+        'pyyaml >= 5.3.1; platform_system=="Windows"',
     ],
     include_package_data=True,
     platforms=[
