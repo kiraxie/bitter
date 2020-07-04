@@ -7,7 +7,7 @@ import logging
 from .center import Center
 from .quote import Quote
 from .reply import Reply
-from .codes import return_codes, kbar_type, kbar_out_type, kbar_trade_session
+from .codes import err_codes, kbar_type, kbar_out_type, kbar_trade_session
 from .structure import Tick, QuoteData, KBar, PriceQty, BestFivePrice
 from .sqlalchemy import LiqueurSqlAlchemy
 
@@ -175,7 +175,7 @@ class Liqueur:
             This function will log the error message when error code not success.
             Otherwise, will log the message with level if provide
         Args:
-            [return_codes]err: The API return code, if this value isn't 0(success),
+            [err_codes]err: The API return code, if this value isn't 0(success),
                 the error message(via center module) will be logging with error level.
             [logging.level]level: Logging level which decide the message level.
             [string]message: Log this message if err is success.
@@ -184,7 +184,7 @@ class Liqueur:
             True: Means err isn't success.
             False: Means return is success.
         '''
-        if err != return_codes.success:
+        if err != err_codes.success:
             self.__corelog.error(self.__center.get_return_code_msg(err))
             return True
 
@@ -455,16 +455,16 @@ class Liqueur:
             self.stop()
             return
 
-        if nKind == return_codes.subject_connection_connected:
+        if nKind == err_codes.subject_connection_connected:
             self.__applog.info('Session...established')
-        elif nKind == return_codes.subject_connection_disconnect:
+        elif nKind == err_codes.subject_connection_disconnect:
             self.__applog.warning('Session...disconnect')
             self.__alive = False
-        elif nKind == return_codes.subject_connection_stocks_ready:
+        elif nKind == err_codes.subject_connection_stocks_ready:
             self.__applog.info('Session...ready')
             self._send_heartbeat()
             self._subscription()
-        elif nKind == return_codes.subject_connection_fail:
+        elif nKind == err_codes.subject_connection_fail:
             self.__applog.error('Connection failure')
             self.__alive = False
         else:
