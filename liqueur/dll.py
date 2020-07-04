@@ -1,5 +1,5 @@
 import comtypes.client as cc
-from .helper import VcredistHelper, CapitalAPIHelper
+from .util import VcredistHelper, CapitalAPIHelper
 
 _DLL_INIT_FLAG = False
 VCREDIST_VER_REQUIRED = '10.0.40219.325'
